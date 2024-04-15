@@ -48,6 +48,64 @@ from mutmut.cache import print_result_cache, print_result_ids_cache, \
     update_line_numbers, print_result_cache_junitxml, get_unified_diff
 
 
+class RunManager:
+    def __init__(self, config):
+        self.config = config
+
+    def setup_environment(self):
+        os.environ['PYTHONDONTWRITEBYTECODE'] = '1'  # stop python from creating .pyc files
+
+    def run_baseline_tests(self):
+        return time_test_suite(
+            swallow_output=not self.config.swallow_output,
+            test_command=self.config.test_command,
+            using_testmon=self.config.using_testmon,
+            current_hash_of_tests=self.config.hash_of_tests,
+            no_progress=self.config.no_progress,
+        )
+
+    def generate_mutations(self, argument, dict_synonyms, paths_to_exclude, paths_to_mutate, tests_dirs):
+        mutations_by_file = {}
+
+        if argument is None:
+            for path in paths_to_mutate:
+                for filename in python_source_files(path, tests_dirs, paths_to_exclude):
+                    if filename.startswith('test_') or filename.endswith('__tests.py'):
+                        continue
+                    update_line_numbers(filename)
+                    add_mutations_by_file(mutations_by_file, filename, dict_synonyms, self.config)
+        else:
+            try:
+                int(argument)
+            except ValueError:
+                filename = argument
+                if not os.path.exists(filename):
+                    raise click.BadArgumentUsage('The run command takes either an integer that is the mutation id or a path to a file to mutate')
+                update_line_numbers(filename)
+                add_mutations_by_file(mutations_by_file, filename, dict_synonyms, self.config)
+            else:
+                filename, mutation_id = filename_and_mutation_id_from_pk(int(argument))
+                update_line_numbers(filename)
+                mutations_by_file[filename] = [mutation_id]
+
+        self.config.total = sum(len(mutations) for mutations in mutations_by_file.values())
+
+        return mutations_by_file
+
+    def run_mutation_tests(self, progress, mutations_by_file):
+        try:
+            run_mutation_tests(config=self.config, progress=progress, mutations_by_file=mutations_by_file)
+        except Exception as e:
+            traceback.print_exc()
+            return compute_exit_code(progress, e)
+        else:
+            return compute_exit_code(progress, ci=self.config.ci)
+        finally:
+            print()  # make sure we end the output with a newline
+            close_active_queues()
+
+
+
 def do_apply(mutation_pk: str, dict_synonyms: List[str], backup: bool):
     """Apply a specified mutant to the source code
 
@@ -445,25 +503,17 @@ Legend for output:
         rerun_all=rerun_all
     )
 
-    parse_run_argument(argument, config, dict_synonyms, mutations_by_file, paths_to_exclude, paths_to_mutate, tests_dirs)
-
-    config.total = sum(len(mutations) for mutations in mutations_by_file.values())
+    run_manager = RunManager(config)
+    run_manager.setup_environment()
+    run_manager.run_baseline_tests()
+    mutations_by_file = run_manager.generate_mutations(argument, dict_synonyms, paths_to_exclude, paths_to_mutate,
+                                                       tests_dirs)
 
     print()
     print('2. Checking mutants')
     progress = Progress(total=config.total, output_legend=output_legend, no_progress=no_progress)
 
-    try:
-        run_mutation_tests(config=config, progress=progress, mutations_by_file=mutations_by_file)
-    except Exception as e:
-        traceback.print_exc()
-        return compute_exit_code(progress, e)
-    else:
-        return compute_exit_code(progress, ci=ci)
-    finally:
-        print()  # make sure we end the output with a newline
-        # Close all active multiprocessing queues to avoid hanging up the main process
-        close_active_queues()
+    return run_manager.run_mutation_tests(progress, mutations_by_file)
 
 
 def parse_run_argument(argument, config, dict_synonyms, mutations_by_file, paths_to_exclude, paths_to_mutate, tests_dirs):
