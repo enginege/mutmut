@@ -1,6 +1,10 @@
-glob2
-parso
-click
-pony
+glob2~=0.7
+parso~=0.8.3
+click~=8.1.7
+pony~=0.7.17
 junit-xml>=1.8,<2
-toml
+toml~=0.10.2
+
+Pygments~=2.17.2
+pytest~=8.1.1
+setuptools~=59.6.0
