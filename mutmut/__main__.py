@@ -80,7 +80,8 @@ class RunManager:
             except ValueError:
                 filename = argument
                 if not os.path.exists(filename):
-                    raise click.BadArgumentUsage('The run command takes either an integer that is the mutation id or a path to a file to mutate')
+                    raise click.BadArgumentUsage(
+                        'The run command takes either an integer that is the mutation id or a path to a file to mutate')
                 update_line_numbers(filename)
                 add_mutations_by_file(mutations_by_file, filename, dict_synonyms, self.config)
             else:
@@ -105,96 +106,38 @@ class RunManager:
             close_active_queues()
 
 class MutationConfig:
-    def __init__(self, use_coverage, use_patch_file, disable_mutation_types, enable_mutation_types,
-                 dict_synonyms, paths_to_mutate, tests_dir, simple_output, runner):
-        self.use_coverage = use_coverage
-        self.use_patch_file = use_patch_file
-        self.disable_mutation_types = disable_mutation_types
-        self.enable_mutation_types = enable_mutation_types
-        self.dict_synonyms = dict_synonyms
-        self.paths_to_mutate = paths_to_mutate
-        self.tests_dir = tests_dir
-        self.simple_output = simple_output
-        self.runner = runner
-        self.mutation_types_to_apply = None
-        self.invalid_types = None
-        self.tests_dirs = []
-        self.current_hash_of_tests = None
-        self.using_testmon = '--testmon' in runner
-        self.output_legend = self._get_output_legend()
+    def __init__(self, config):
+        self.config = config
 
-    def validate(self):
-        if self.use_coverage and self.use_patch_file:
-            raise click.BadArgumentUsage("You can't combine --use-coverage and --use-patch")
+    def setup_environment(self):
+        os.environ['PYTHONDONTWRITEBYTECODE'] = '1'  # stop python from creating .pyc files
 
-        if self.disable_mutation_types and self.enable_mutation_types:
-            raise click.BadArgumentUsage("You can't combine --disable-mutation-types and --enable-mutation-types")
+    def run_baseline_tests(self):
+        return time_test_suite(
+            swallow_output=not self.config.swallow_output,
+            test_command=self.config.test_command,
+            using_testmon=self.config.using_testmon,
+            current_hash_of_tests=self.config.hash_of_tests,
+            no_progress=self.config.no_progress,
+        )
 
-        if self.enable_mutation_types:
-            self.mutation_types_to_apply = set(mtype.strip() for mtype in self.enable_mutation_types.split(","))
-            self.invalid_types = [mtype for mtype in self.mutation_types_to_apply if mtype not in mutations_by_type]
-        elif self.disable_mutation_types:
-            self.mutation_types_to_apply = set(mutations_by_type.keys()) - set(mtype.strip() for mtype in self.disable_mutation_types.split(","))
-            self.invalid_types = [mtype for mtype in self.disable_mutation_types.split(",") if mtype not in mutations_by_type]
+    def generate_mutations(self, argument, dict_synonyms, paths_to_exclude, paths_to_mutate, tests_dirs):
+        mutations_by_file = {}
+        parse_run_argument(argument, self.config, dict_synonyms, mutations_by_file, paths_to_exclude, paths_to_mutate, tests_dirs)
+        self.config.total = sum(len(mutations) for mutations in mutations_by_file.values())
+        return mutations_by_file
+
+    def run_mutation_tests(self, progress, mutations_by_file):
+        try:
+            run_mutation_tests(config=self.config, progress=progress, mutations_by_file=mutations_by_file)
+        except Exception as e:
+            traceback.print_exc()
+            return compute_exit_code(progress, e)
         else:
-            self.mutation_types_to_apply = set(mutations_by_type.keys())
-            self.invalid_types = None
-
-        if self.invalid_types:
-            raise click.BadArgumentUsage(f"The following are not valid mutation types: {', '.join(sorted(self.invalid_types))}. Valid mutation types are: {', '.join(mutations_by_type.keys())}")
-
-        self.dict_synonyms = [x.strip() for x in self.dict_synonyms.split(',')]
-
-        if self.use_coverage and not exists('.coverage'):
-            raise FileNotFoundError('No .coverage file found. You must generate a coverage file to use this feature.')
-
-        if self.paths_to_mutate is None:
-            self.paths_to_mutate = guess_paths_to_mutate()
-
-        if not isinstance(self.paths_to_mutate, (list, tuple)):
-            self.paths_to_mutate = self._split_paths(self.paths_to_mutate)
-
-        if not self.paths_to_mutate:
-            raise click.BadOptionUsage(
-                '--paths-to-mutate',
-                'You must specify a list of paths to mutate.'
-                'Either as a command line argument, or by setting paths_to_mutate under the section [mutmut] in setup.cfg.'
-                'To specify multiple paths, separate them with commas or colons (i.e: --paths-to-mutate=path1/,path2/path3/,path4/).'
-            )
-
-        test_paths = self._split_paths(self.tests_dir)
-        if test_paths is None:
-            raise FileNotFoundError(
-                'No test folders found in current folder. Run this where there is a "tests" or "test" folder.'
-            )
-        for p in test_paths:
-            self.tests_dirs.extend(glob(p, recursive=True))
-
-        for p in self.paths_to_mutate:
-            for pt in self._split_paths(self.tests_dir):
-                self.tests_dirs.extend(glob(p + '/**/' + pt, recursive=True))
-
-        self.current_hash_of_tests = hash_of_tests(self.tests_dirs)
-
-    def _split_paths(self, paths):
-        for sep in [',', ':']:
-            separated = list(filter(lambda p: Path(p).exists(), paths.split(sep)))
-            if separated:
-                return separated
-        return None
-
-    def _get_output_legend(self):
-        output_legend = {
-            "killed": "🎉",
-            "timeout": "⏰",
-            "suspicious": "🤔",
-            "survived": "🙁",
-            "skipped": "🔇",
-        }
-        if self.simple_output:
-            output_legend = {key: key.upper() for (key, value) in output_legend.items()}
-        return output_legend
-
+            return compute_exit_code(progress, ci=self.config.ci)
+        finally:
+            print()  # make sure we end the output with a newline
+            close_active_queues()
 
 
 def do_apply(mutation_pk: str, dict_synonyms: List[str], backup: bool):
@@ -259,9 +202,10 @@ def version():
 @click.option('--runner')
 @click.option('--use-coverage', is_flag=True, default=False)
 @click.option('--use-patch-file', help='Only mutate lines added/changed in the given patch file')
-@click.option('--rerun-all', is_flag=True, default=False, help='If you modified the test_command in the pre_mutation hook, '
-                                                               'the default test_command (specified by the "runner" option) '
-                                                               'will be executed if the mutant survives with your modified test_command.')
+@click.option('--rerun-all', is_flag=True, default=False,
+              help='If you modified the test_command in the pre_mutation hook, '
+                   'the default test_command (specified by the "runner" option) '
+                   'will be executed if the mutant survives with your modified test_command.')
 @click.option('--tests-dir')
 @click.option('-m', '--test-time-multiplier', default=2.0, type=float)
 @click.option('-b', '--test-time-base', default=0.0, type=float)
@@ -269,9 +213,11 @@ def version():
 @click.option('--dict-synonyms')
 @click.option('--pre-mutation')
 @click.option('--post-mutation')
-@click.option('--simple-output', is_flag=True, default=False, help="Swap emojis in mutmut output to plain text alternatives.")
+@click.option('--simple-output', is_flag=True, default=False,
+              help="Swap emojis in mutmut output to plain text alternatives.")
 @click.option('--no-progress', is_flag=True, default=False, help="Disable real-time progress indicator")
-@click.option('--CI', is_flag=True, default=False, help="Returns an exit code of 0 for all successful runs and an exit code of 1 for fatal errors.")
+@click.option('--CI', is_flag=True, default=False,
+              help="Returns an exit code of 0 for all successful runs and an exit code of 1 for fatal errors.")
 @config_from_file(
     dict_synonyms='',
     paths_to_exclude='',
@@ -415,125 +361,169 @@ def html(dict_synonyms, directory):
     create_html_report(dict_synonyms, directory)
     sys.exit(0)
 
+def split_paths(paths):
+    for sep in [',', ':']:
+        separated = list(filter(lambda p: Path(p).exists(), paths.split(sep)))
+        if separated:
+            return separated
+    return None
+
+def get_output_legend(simple_output):
+    output_legend = {
+        "killed": "🎉",
+        "timeout": "⏰",
+        "suspicious": "🤔",
+        "survived": "🙁",
+        "skipped": "🔇",
+    }
+    if simple_output:
+        output_legend = {key: key.upper() for (key, value) in output_legend.items()}
+    return output_legend
+
+def validate_arguments(use_coverage, use_patch_file, disable_mutation_types, enable_mutation_types):
+    if use_coverage and use_patch_file:
+        raise click.BadArgumentUsage("You can't combine --use-coverage and --use-patch")
+
+    if disable_mutation_types and enable_mutation_types:
+        raise click.BadArgumentUsage("You can't combine --disable-mutation-types and --enable-mutation-types")
+
+
+def get_paths_to_mutate(paths_to_mutate):
+    if paths_to_mutate is None:
+        paths_to_mutate = guess_paths_to_mutate()
+
+    if not isinstance(paths_to_mutate, (list, tuple)):
+        paths_to_mutate = split_paths(paths_to_mutate)
+
+    if not paths_to_mutate:
+        raise click.BadOptionUsage(
+            '--paths-to-mutate',
+            'You must specify a list of paths to mutate.'
+            'Either as a command line argument, or by setting paths_to_mutate under the section [mutmut] in setup.cfg.'
+            'To specify multiple paths, separate them with commas or colons (i.e: --paths-to-mutate=path1/,path2/path3/,path4/).'
+        )
+
+    return paths_to_mutate
+
+
+def get_tests_dirs(tests_dir):
+    test_paths = split_paths(tests_dir)
+    if test_paths is None:
+        raise FileNotFoundError(
+            'No test folders found in current folder. Run this where there is a "tests" or "test" folder.'
+        )
+    return [p for p in test_paths for p in glob(p, recursive=True)]
+
+
+def get_covered_lines_by_filename(use_coverage, use_patch_file):
+    if not use_coverage and not use_patch_file:
+        return None
+
+    covered_lines_by_filename = {}
+    if use_coverage:
+        coverage_data = read_coverage_data()
+        check_coverage_data_filepaths(coverage_data)
+    else:
+        assert use_patch_file
+        covered_lines_by_filename = read_patch_data(use_patch_file)
+
+    return covered_lines_by_filename
+
+
+def get_mutation_types_to_apply(disable_mutation_types, enable_mutation_types):
+    if enable_mutation_types:
+        mutation_types_to_apply = set(mtype.strip() for mtype in enable_mutation_types.split(","))
+        invalid_types = [mtype for mtype in mutation_types_to_apply if mtype not in mutations_by_type]
+    elif disable_mutation_types:
+        mutation_types_to_apply = set(mutations_by_type.keys()) - set(
+            mtype.strip() for mtype in disable_mutation_types.split(","))
+        invalid_types = [mtype for mtype in disable_mutation_types.split(",") if mtype not in mutations_by_type]
+    else:
+        mutation_types_to_apply = set(mutations_by_type.keys())
+        invalid_types = None
+
+    if invalid_types:
+        raise click.BadArgumentUsage(
+            f"The following are not valid mutation types: {', '.join(sorted(invalid_types))}. Valid mutation types are: {', '.join(mutations_by_type.keys())}")
+
+    return mutation_types_to_apply
 
 def do_run(
-    argument,
-    paths_to_mutate,
-    disable_mutation_types,
-    enable_mutation_types,
-    runner,
-    tests_dir,
-    test_time_multiplier,
-    test_time_base,
-    swallow_output,
-    use_coverage,
-    dict_synonyms,
-    pre_mutation,
-    post_mutation,
-    use_patch_file,
-    paths_to_exclude,
-    simple_output,
-    no_progress,
-    ci,
-    rerun_all,
+        argument,
+        paths_to_mutate,
+        disable_mutation_types,
+        enable_mutation_types,
+        runner,
+        tests_dir,
+        test_time_multiplier,
+        test_time_base,
+        swallow_output,
+        use_coverage,
+        dict_synonyms,
+        pre_mutation,
+        post_mutation,
+        use_patch_file,
+        paths_to_exclude,
+        simple_output,
+        no_progress,
+        ci,
+        rerun_all,
 ) -> int:
-    """return exit code, after performing an mutation test run.
+    validate_arguments(use_coverage, use_patch_file, disable_mutation_types, enable_mutation_types)
 
-    :return: the exit code from executing the mutation tests for run command
-    """
-    mutation_config = MutationConfig(
-        use_coverage=use_coverage,
-        use_patch_file=use_patch_file,
-        disable_mutation_types=disable_mutation_types,
-        enable_mutation_types=enable_mutation_types,
-        dict_synonyms=dict_synonyms,
-        paths_to_mutate=paths_to_mutate,
-        tests_dir=tests_dir,
-        simple_output=simple_output,
-        runner=runner
-    )
-    mutation_config.validate()
+    dict_synonyms = [x.strip() for x in dict_synonyms.split(',')]
 
-    os.environ['PYTHONDONTWRITEBYTECODE'] = '1'  # stop python from creating .pyc files
+    if use_coverage and not exists('.coverage'):
+        raise FileNotFoundError('No .coverage file found. You must generate a coverage file to use this feature.')
 
-    print("""
-- Mutation testing starting -
+    paths_to_mutate = get_paths_to_mutate(paths_to_mutate)
+    tests_dirs = get_tests_dirs(tests_dir)
 
-These are the steps:
-1. A full test suite run will be made to make sure we
-   can run the tests successfully and we know how long
-   it takes (to detect infinite loops for example)
-2. Mutants will be generated and checked
+    current_hash_of_tests = hash_of_tests(tests_dirs)
 
-Results are stored in .mutmut-cache.
-Print found mutants with `mutmut results`.
+    mutation_types_to_apply = get_mutation_types_to_apply(disable_mutation_types, enable_mutation_types)
 
-Legend for output:
-{killed} Killed mutants.   The goal is for everything to end up in this bucket.
-{timeout} Timeout.          Test suite took 10 times as long as the baseline so were killed.
-{suspicious} Suspicious.       Tests took a long time, but not long enough to be fatal.
-{survived} Survived.         This means your tests need to be expanded.
-{skipped} Skipped.          Skipped.
-""".format(**mutation_config.output_legend))
-
-    if runner is DEFAULT_RUNNER:
-        try:
-            import pytest  # noqa
-        except ImportError:
-            runner = 'python -m unittest'
-
-    if hasattr(mutmut_config, 'init'):
-        mutmut_config.init()
+    covered_lines_by_filename = get_covered_lines_by_filename(use_coverage, use_patch_file)
+    coverage_data = read_coverage_data() if use_coverage else None
 
     config = Config(
         total=0,  # we'll fill this in later!
         swallow_output=not swallow_output,
         test_command=runner,
-        covered_lines_by_filename=None,
-        coverage_data=None,
-        baseline_time_elapsed=None,
-        dict_synonyms=mutation_config.dict_synonyms,
-        using_testmon=mutation_config.using_testmon,
-        tests_dirs=mutation_config.tests_dirs,
-        hash_of_tests=mutation_config.current_hash_of_tests,
+        covered_lines_by_filename=covered_lines_by_filename,
+        coverage_data=coverage_data,
+        baseline_time_elapsed=None,  # we'll fill this in later!
+        dict_synonyms=dict_synonyms,
+        using_testmon='--testmon' in runner,
+        tests_dirs=tests_dirs,
+        hash_of_tests=current_hash_of_tests,
         test_time_multiplier=test_time_multiplier,
         test_time_base=test_time_base,
         pre_mutation=pre_mutation,
         post_mutation=post_mutation,
-        paths_to_mutate=mutation_config.paths_to_mutate,
-        mutation_types_to_apply=mutation_config.mutation_types_to_apply,
+        paths_to_mutate=paths_to_mutate,
+        mutation_types_to_apply=mutation_types_to_apply,
         no_progress=no_progress,
         ci=ci,
         rerun_all=rerun_all
     )
 
-    run_manager = RunManager(config)
-    run_manager.setup_environment()
-    run_manager.run_baseline_tests()
+    mutation_test_runner = MutationConfig(config)
+    mutation_test_runner.setup_environment()
+    baseline_time_elapsed = mutation_test_runner.run_baseline_tests()
+    config.baseline_time_elapsed = baseline_time_elapsed
 
-    # if we're running in a mode with externally whitelisted lines
-    if use_coverage or use_patch_file:
-        covered_lines_by_filename = {}
-        if use_coverage:
-            coverage_data = read_coverage_data()
-            check_coverage_data_filepaths(coverage_data)
-            config.coverage_data = coverage_data
-        else:
-            assert use_patch_file
-            covered_lines_by_filename = read_patch_data(use_patch_file)
-            config.covered_lines_by_filename = covered_lines_by_filename
-
-    mutations_by_file = run_manager.generate_mutations(argument, mutation_config.dict_synonyms, paths_to_exclude,
-                                                       mutation_config.paths_to_mutate, mutation_config.tests_dirs)
+    mutations_by_file = mutation_test_runner.generate_mutations(argument, dict_synonyms, paths_to_exclude, paths_to_mutate, tests_dirs)
 
     print()
     print('2. Checking mutants')
-    progress = Progress(total=config.total, output_legend=mutation_config.output_legend, no_progress=no_progress)
+    progress = Progress(total=config.total, output_legend=get_output_legend(simple_output), no_progress=no_progress)
 
-    return run_manager.run_mutation_tests(progress, mutations_by_file)
+    return mutation_test_runner.run_mutation_tests(progress, mutations_by_file)
 
 
-def parse_run_argument(argument, config, dict_synonyms, mutations_by_file, paths_to_exclude, paths_to_mutate, tests_dirs):
+def parse_run_argument(argument, config, dict_synonyms, mutations_by_file, paths_to_exclude, paths_to_mutate,
+                       tests_dirs):
     if argument is None:
         for path in paths_to_mutate:
             for filename in python_source_files(path, tests_dirs, paths_to_exclude):
@@ -547,7 +537,8 @@ def parse_run_argument(argument, config, dict_synonyms, mutations_by_file, paths
         except ValueError:
             filename = argument
             if not os.path.exists(filename):
-                raise click.BadArgumentUsage('The run command takes either an integer that is the mutation id or a path to a file to mutate')
+                raise click.BadArgumentUsage(
+                    'The run command takes either an integer that is the mutation id or a path to a file to mutate')
             update_line_numbers(filename)
             add_mutations_by_file(mutations_by_file, filename, dict_synonyms, config)
             return
@@ -558,11 +549,11 @@ def parse_run_argument(argument, config, dict_synonyms, mutations_by_file, paths
 
 
 def time_test_suite(
-    swallow_output: bool,
-    test_command: str,
-    using_testmon: bool,
-    current_hash_of_tests,
-    no_progress,
+        swallow_output: bool,
+        test_command: str,
+        using_testmon: bool,
+        current_hash_of_tests,
+        no_progress,
 ) -> float:
     """Execute a test suite specified by ``test_command`` and record
     the time it took to execute the test suite as a floating point number
@@ -596,7 +587,10 @@ def time_test_suite(
     if returncode == 0 or (using_testmon and returncode == 5):
         baseline_time_elapsed = time() - start_time
     else:
-        raise RuntimeError("Tests don't run cleanly without mutations. Test command was: {}\n\nOutput:\n\n{}".format(test_command, '\n'.join(output)))
+        raise RuntimeError(
+            "Tests don't run cleanly without mutations. Test command was: {}\n\nOutput:\n\n{}".format(test_command,
+                                                                                                      '\n'.join(
+                                                                                                          output)))
 
     print('Done')
 
