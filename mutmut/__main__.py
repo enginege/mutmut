@@ -502,30 +502,37 @@ def do_run(
     return mutation_test_runner.run_mutation_tests(progress, mutations_by_file)
 
 
-def parse_run_argument(argument, config, dict_synonyms, mutations_by_file, paths_to_exclude, paths_to_mutate,
-                       tests_dirs):
+def parse_run_argument(argument, config, dict_synonyms, mutations_by_file, paths_to_exclude, paths_to_mutate, tests_dirs):
     if argument is None:
-        for path in paths_to_mutate:
-            for filename in python_source_files(path, tests_dirs, paths_to_exclude):
-                if filename.startswith('test_') or filename.endswith('__tests.py'):
-                    continue
-                update_line_numbers(filename)
-                add_mutations_by_file(mutations_by_file, filename, dict_synonyms, config)
+        handle_no_argument(config, dict_synonyms, mutations_by_file, paths_to_exclude, paths_to_mutate, tests_dirs)
     else:
-        try:
-            int(argument)
-        except ValueError:
-            filename = argument
-            if not os.path.exists(filename):
-                raise click.BadArgumentUsage(
-                    'The run command takes either an integer that is the mutation id or a path to a file to mutate')
+        handle_argument(argument, config, dict_synonyms, mutations_by_file)
+
+def handle_no_argument(config, dict_synonyms, mutations_by_file, paths_to_exclude, paths_to_mutate, tests_dirs):
+    for path in paths_to_mutate:
+        process_files_in_path(path, tests_dirs, paths_to_exclude, dict_synonyms, mutations_by_file, config)
+
+def process_files_in_path(path, tests_dirs, paths_to_exclude, dict_synonyms, mutations_by_file, config):
+    for filename in python_source_files(path, tests_dirs, paths_to_exclude):
+        if not filename.startswith('test_') and not filename.endswith('__tests.py'):
             update_line_numbers(filename)
             add_mutations_by_file(mutations_by_file, filename, dict_synonyms, config)
-            return
 
+def handle_argument(argument, config, dict_synonyms, mutations_by_file):
+    try:
+        int(argument)  # to check if it's an integer
         filename, mutation_id = filename_and_mutation_id_from_pk(int(argument))
         update_line_numbers(filename)
         mutations_by_file[filename] = [mutation_id]
+    except ValueError:
+        if not os.path.exists(argument):
+            raise click.BadArgumentUsage(
+                'The run command takes either an integer that is the mutation id or a path to a file to mutate')
+        process_single_file(argument, dict_synonyms, mutations_by_file, config)
+
+def process_single_file(filename, dict_synonyms, mutations_by_file, config):
+    update_line_numbers(filename)
+    add_mutations_by_file(mutations_by_file, filename, dict_synonyms, config)
 
 
 def time_test_suite(
