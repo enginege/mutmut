@@ -34,6 +34,13 @@ from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple
 from parso import parse
 from parso.python.tree import Name, Number, Keyword, FStringStart, FStringEnd
 
+from .relative_mutation_id import RelativeMutationID, ALL
+from .ast_pattern import ASTPattern
+from .context import Context
+from .config import Config
+from .progress import Progress, UNTESTED, SKIPPED, BAD_TIMEOUT, OK_SUSPICIOUS, BAD_SURVIVED, OK_KILLED, MUTANT_STATUSES, print_status
+from .skip_exception import SkipException
+
 __version__ = '2.4.5'
 
 
@@ -43,116 +50,6 @@ try:
     import mutmut_config
 except ImportError:
     mutmut_config = None
-
-
-@dataclass(frozen=True)
-class RelativeMutationID:
-    line: str
-    index: int
-    line_number: int
-    filename: Optional[str] = field(default=None, compare=False, hash=False)
-
-
-ALL = RelativeMutationID(filename='%all%', line='%all%', index=-1, line_number=-1)
-
-
-class InvalidASTPatternException(Exception):
-    pass
-
-
-class ASTPattern:
-    def __init__(self, source, **definitions):
-        if definitions is None:
-            definitions = {}
-        source = source.strip()
-
-        self.definitions = definitions
-
-        self.module = parse(source)
-
-        self.markers = []
-
-        def get_leaf(line, column, of_type=None):
-            r = self.module.children[0].get_leaf_for_position((line, column))
-            while of_type is not None and r.type != of_type:
-                r = r.parent
-            return r
-
-        def parse_markers(node):
-            if hasattr(node, '_split_prefix'):
-                for x in node._split_prefix():
-                    parse_markers(x)
-
-            if hasattr(node, 'children'):
-                for x in node.children:
-                    parse_markers(x)
-
-            if node.type == 'comment':
-                line, column = node.start_pos
-                for match in re.finditer(r'\^(?P<value>[^\^]*)', node.value):
-                    name = match.groupdict()['value'].strip()
-                    d = definitions.get(name, {})
-                    assert set(d.keys()) | {'of_type', 'marker_type'} == {'of_type', 'marker_type'}
-                    self.markers.append(dict(
-                        node=get_leaf(line - 1, column + match.start(), of_type=d.get('of_type')),
-                        marker_type=d.get('marker_type'),
-                        name=name,
-                    ))
-
-        parse_markers(self.module)
-
-        pattern_nodes = [x['node'] for x in self.markers if x['name'] == 'match' or x['name'] == '']
-        if len(pattern_nodes) != 1:
-            raise InvalidASTPatternException("Found more than one match node. Match nodes are nodes with an empty name or with the explicit name 'match'")
-        self.pattern = pattern_nodes[0]
-        self.marker_type_by_id = {id(x['node']): x['marker_type'] for x in self.markers}
-
-    def matches(self, node, pattern=None, skip_child=None):
-        if pattern is None:
-            pattern = self.pattern
-
-        check_value = True
-        check_children = True
-
-        # Match type based on the name, so _keyword matches all keywords.
-        # Special case for _all that matches everything
-        if pattern.type == 'name' and pattern.value.startswith('_') and pattern.value[1:] in ('any', node.type):
-            check_value = False
-
-        # The advanced case where we've explicitly marked up a node with
-        # the accepted types
-        elif id(pattern) in self.marker_type_by_id:
-            if self.marker_type_by_id[id(pattern)] in (pattern.type, 'any'):
-                check_value = False
-                check_children = False  # TODO: really? or just do this for 'any'?
-
-        # Check node type strictly
-        elif pattern.type != node.type:
-            return False
-
-        # Match children
-        if check_children and hasattr(pattern, 'children'):
-            if len(pattern.children) != len(node.children):
-                return False
-
-            for pattern_child, node_child in zip(pattern.children, node.children):
-                if node_child is skip_child:  # prevent infinite recursion
-                    continue
-
-                if not self.matches(node=node_child, pattern=pattern_child, skip_child=node_child):
-                    return False
-
-        # Node value
-        if check_value and hasattr(pattern, 'value'):
-            if pattern.value != node.value:
-                return False
-
-        # Parent
-        if pattern.parent.type != 'file_input':  # top level matches nothing
-            if skip_child != node:
-                return self.matches(node=node.parent, pattern=pattern.parent, skip_child=node)
-
-        return True
 
 
 # We have a global whitelist for constants of the pattern __all__, __version__, etc
@@ -171,26 +68,7 @@ dunder_whitelist = [
 ]
 
 
-class SkipException(Exception):
-    pass
 
-
-UNTESTED = 'untested'
-OK_KILLED = 'ok_killed'
-OK_SUSPICIOUS = 'ok_suspicious'
-BAD_TIMEOUT = 'bad_timeout'
-BAD_SURVIVED = 'bad_survived'
-SKIPPED = 'skipped'
-
-
-MUTANT_STATUSES = {
-    "killed": OK_KILLED,
-    "timeout": BAD_TIMEOUT,
-    "suspicious": OK_SUSPICIOUS,
-    "survived": BAD_SURVIVED,
-    "skipped": SKIPPED,
-    "untested": UNTESTED,
-}
 
 
 def number_mutation(value, **_):
@@ -467,103 +345,6 @@ mutations_by_type = {
 
 # TODO: detect regexes and mutate them in nasty ways? Maybe mutate all strings as if they are regexes
 
-
-def should_exclude(context, config: Optional[Config]):
-    if config is None or config.covered_lines_by_filename is None:
-        return False
-
-    try:
-        covered_lines = config.covered_lines_by_filename[context.filename]
-    except KeyError:
-        if config.coverage_data is not None:
-            covered_lines = config.coverage_data.get(os.path.abspath(context.filename))
-            config.covered_lines_by_filename[context.filename] = covered_lines
-        else:
-            covered_lines = None
-
-    if covered_lines is None:
-        return True
-    current_line = context.current_line_index + 1
-    if current_line not in covered_lines:
-        return True
-    return False
-
-
-class Context:
-    def __init__(
-        self,
-        source: Optional[str] = None,
-        mutation_id=ALL,
-        dict_synonyms=None,
-        filename=None,
-        config: Optional[Config] = None,
-        index=0,
-    ):
-        self.index = index
-        self.remove_newline_at_end = False
-        self._source = None
-        self._set_source(source)
-        self.mutation_id = mutation_id
-        self.performed_mutation_ids = []
-        assert isinstance(mutation_id, RelativeMutationID)
-        self.current_line_index = 0
-        self.filename = filename
-        self.stack = []
-        self.dict_synonyms = (dict_synonyms or []) + ['dict']
-        self._source_by_line_number = None
-        self._pragma_no_mutate_lines = None
-        self._path_by_line = None
-        self.config = config
-        self.skip = False
-
-    def exclude_line(self):
-        return self.current_line_index in self.pragma_no_mutate_lines or should_exclude(context=self, config=self.config)
-
-    @property
-    def source(self):
-        if self._source is None:
-            with open(self.filename) as f:
-                self._set_source(f.read())
-        return self._source
-
-    def _set_source(self, source):
-        if source and source[-1] != '\n':
-            source += '\n'
-            self.remove_newline_at_end = True
-        self._source = source
-
-    @property
-    def source_by_line_number(self):
-        if self._source_by_line_number is None:
-            self._source_by_line_number = self.source.split('\n')
-        return self._source_by_line_number
-
-    @property
-    def current_source_line(self):
-        return self.source_by_line_number[self.current_line_index]
-
-    @property
-    def mutation_id_of_current_index(self):
-        return RelativeMutationID(filename=self.filename, line=self.current_source_line, index=self.index, line_number=self.current_line_index)
-
-    @property
-    def pragma_no_mutate_lines(self):
-        if self._pragma_no_mutate_lines is None:
-            self._pragma_no_mutate_lines = {
-                i
-                for i, line in enumerate(self.source_by_line_number)
-                if '# pragma:' in line and 'no mutate' in line.partition('# pragma:')[-1]
-            }
-        return self._pragma_no_mutate_lines
-
-    def should_mutate(self, node):
-        if self.config and node.type not in self.config.mutation_types_to_apply:
-            return False
-        if self.mutation_id == ALL:
-            return True
-        return self.mutation_id in (ALL, self.mutation_id_of_current_index)
-
-
 def mutate(context: Context) -> Tuple[str, int]:
     """
     :return: tuple of mutated source code and number of mutations performed
@@ -833,33 +614,6 @@ def run_mutation(context: Context, callback) -> str:
                 callback(result)
 
 
-@dataclass
-class Config:
-    swallow_output: bool
-    test_command: str
-    _default_test_command: str = field(init=False)
-    covered_lines_by_filename: Optional[Dict[str, set[Optional[int]]]]
-    baseline_time_elapsed: float
-    test_time_multiplier: float
-    test_time_base: float
-    dict_synonyms: List[str]
-    total: int
-    using_testmon: bool
-    tests_dirs: List[str]
-    hash_of_tests: str
-    post_mutation: str
-    pre_mutation: str
-    coverage_data: Dict[str, Dict[int, List[str]]]
-    paths_to_mutate: List[str]
-    mutation_types_to_apply: Set[str]
-    no_progress: bool
-    ci: bool
-    rerun_all: bool
-
-    def __post_init__(self):
-        self._default_test_command = self.test_command
-
-
 def tests_pass(config: Config, callback) -> bool:
     """
     :return: :obj:`True` if the tests pass, otherwise :obj:`False`
@@ -907,23 +661,7 @@ def config_from_file(**defaults):
     return decorator
 
 
-def status_printer():
-    """Manage the printing and in-place updating of a line of characters
 
-    .. note::
-        If the string is longer than a line, then in-place updating may not
-        work (it will print a new line at each refresh).
-    """
-    last_len = [0]
-
-    def p(s):
-        s = next(spinner) + ' ' + s
-        len_s = len(s)
-        output = '\r' + s + (' ' * max(last_len[0] - len_s, 0))
-        sys.stdout.write(output)
-        sys.stdout.flush()
-        last_len[0] = len_s
-    return p
 
 
 
@@ -949,53 +687,6 @@ def guess_paths_to_mutate() -> str:
         'Please specify it on the command line using --paths-to-mutate, '
         'or by adding "paths_to_mutate=code_dir" in pyproject.toml or setup.cfg to the [mutmut] '
         'section.')
-
-
-class Progress:
-    def __init__(self, total, output_legend, no_progress=False):
-        self.total = total
-        self.output_legend = output_legend
-        self.progress = 0
-        self.skipped = 0
-        self.killed_mutants = 0
-        self.surviving_mutants = 0
-        self.surviving_mutants_timeout = 0
-        self.suspicious_mutants = 0
-        self.no_progress = no_progress
-
-    def print(self):
-        if self.no_progress:
-            return
-        print_status('{}/{}  {} {}  {} {}  {} {}  {} {}  {} {}'.format(
-            self.progress,
-            self.total,
-            self.output_legend["killed"],
-            self.killed_mutants,
-            self.output_legend["timeout"],
-            self.surviving_mutants_timeout,
-            self.output_legend["suspicious"],
-            self.suspicious_mutants,
-            self.output_legend["survived"],
-            self.surviving_mutants,
-            self.output_legend["skipped"],
-            self.skipped)
-        )
-
-    def register(self, status):
-        if status == BAD_SURVIVED:
-            self.surviving_mutants += 1
-        elif status == BAD_TIMEOUT:
-            self.surviving_mutants_timeout += 1
-        elif status == OK_KILLED:
-            self.killed_mutants += 1
-        elif status == OK_SUSPICIOUS:
-            self.suspicious_mutants += 1
-        elif status == SKIPPED:
-            self.skipped += 1
-        else:
-            raise ValueError('Unknown status returned from run_mutation: {}'.format(status))
-        self.progress += 1
-        self.print()
 
 
 def check_coverage_data_filepaths(coverage_data):
@@ -1332,8 +1023,6 @@ def compute_exit_code(
 
 
 hammett_prefix = 'python -m hammett '
-spinner = itertools.cycle('⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏')
-print_status = status_printer()
 
 # List of active multiprocessing queues
 _active_queues = []

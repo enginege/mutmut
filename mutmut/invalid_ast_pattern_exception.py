@@ -1,0 +1,2 @@
+class InvalidASTPatternException(Exception):
+    pass
