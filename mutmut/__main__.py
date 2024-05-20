@@ -70,9 +70,9 @@ class MutationTestRunner:
         self.config.total = sum(len(mutations) for mutations in mutations_by_file.values())
         return mutations_by_file
 
-    def run_mutation_tests(self, progress, mutations_by_file):
+    def run_mutation_tests(self, progress, mutations_by_file, max_workers):
         try:
-            run_mutation_tests(config=self.config, progress=progress, mutations_by_file=mutations_by_file)
+            run_mutation_tests(config=self.config, progress=progress, mutations_by_file=mutations_by_file, max_workers=max_workers)
         except Exception as e:
             traceback.print_exc()
             return compute_exit_code(progress, e)
@@ -287,10 +287,11 @@ def version():
     post_mutation=None,
     use_patch_file=None,
 )
+@click.option('--max-workers', default=2, help='Set the max workers for ThreadPoolExecutor')
 def run(argument, paths_to_mutate, disable_mutation_types, enable_mutation_types, runner,
         tests_dir, test_time_multiplier, test_time_base, swallow_output, use_coverage,
         dict_synonyms, pre_mutation, post_mutation, use_patch_file, paths_to_exclude,
-        simple_output, no_progress, ci, rerun_all):
+        simple_output, no_progress, ci, rerun_all, max_workers):
     """
     Runs mutmut. You probably want to start with just trying this. If you supply a mutation ID mutmut will check just this mutant.
 
@@ -325,7 +326,7 @@ def run(argument, paths_to_mutate, disable_mutation_types, enable_mutation_types
     sys.exit(do_run(argument, paths_to_mutate, disable_mutation_types, enable_mutation_types, runner,
                     tests_dir, test_time_multiplier, test_time_base, swallow_output, use_coverage,
                     dict_synonyms, pre_mutation, post_mutation, use_patch_file, paths_to_exclude,
-                    simple_output, no_progress, ci, rerun_all))
+                    simple_output, no_progress, ci, rerun_all, max_workers))
 
 
 @climain.command(context_settings=dict(help_option_names=['-h', '--help']))
@@ -442,6 +443,7 @@ def do_run(
         no_progress,
         ci,
         rerun_all,
+        max_workers,
 ) -> int:
     mutation_test_runner = MutationTestRunner(Config(
         total=0,  # we'll fill this in later!
@@ -499,7 +501,7 @@ def do_run(
     print('2. Checking mutants')
     progress = Progress(total=mutation_test_runner.config.total, output_legend=mutation_test_runner.get_output_legend(simple_output), no_progress=no_progress)
 
-    return mutation_test_runner.run_mutation_tests(progress, mutations_by_file)
+    return mutation_test_runner.run_mutation_tests(progress, mutations_by_file, max_workers=max_workers)
 
 
 def parse_run_argument(argument, config, dict_synonyms, mutations_by_file, paths_to_exclude, paths_to_mutate, tests_dirs):
