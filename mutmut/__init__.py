@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-
+from concurrent.futures import ThreadPoolExecutor
+import uuid
 import fnmatch
 import itertools
 import multiprocessing
@@ -691,13 +692,13 @@ def mutate_file(backup: bool, context: Context) -> Tuple[str, str]:
     with open(context.filename) as f:
         original = f.read()
     if backup:
-        with open(context.filename + '.bak', 'w') as f:
+        context.backup_filename = f"{context.filename}.{uuid.uuid4()}.bak"
+        with open(context.backup_filename, 'w') as f:
             f.write(original)
     mutated, _ = mutate(context)
     with open(context.filename, 'w') as f:
         f.write(mutated)
     return original, mutated
-
 
 def queue_mutants(
     *,
@@ -705,35 +706,40 @@ def queue_mutants(
     config: Config,
     mutants_queue,
     mutations_by_file: Dict[str, List[RelativeMutationID]],
+    max_workers: int = 2
 ):
     from mutmut.cache import get_cached_mutation_statuses
 
     try:
         index = 0
-        for filename, mutations in mutations_by_file.items():
-            cached_mutation_statuses = get_cached_mutation_statuses(filename, mutations, config.hash_of_tests)
-            with open(filename) as f:
-                source = f.read()
-            for mutation_id in mutations:
-                cached_status = cached_mutation_statuses.get(mutation_id)
-                if cached_status != UNTESTED:
-                    progress.register(cached_status)
-                    continue
-                context = Context(
-                    mutation_id=mutation_id,
-                    filename=filename,
-                    dict_synonyms=config.dict_synonyms,
-                    config=copy_obj(config),
-                    source=source,
-                    index=index,
-                )
-                mutants_queue.put(('mutant', context))
-                index += 1
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = []
+            for filename, mutations in mutations_by_file.items():
+                cached_mutation_statuses = get_cached_mutation_statuses(filename, mutations, config.hash_of_tests)
+                with open(filename) as f:
+                    source = f.read()
+                for mutation_id in mutations:
+                    cached_status = cached_mutation_statuses.get(mutation_id)
+                    if cached_status != UNTESTED:
+                        progress.register(cached_status)
+                        continue
+                    context = Context(
+                        mutation_id=mutation_id,
+                        filename=filename,
+                        dict_synonyms=config.dict_synonyms,
+                        config=copy_obj(config),
+                        source=source,
+                        index=index,
+                    )
+                    futures.append(executor.submit(mutants_queue.put, ('mutant', context)))
+                    index += 1
+            for future in futures:
+                future.result()
     finally:
         mutants_queue.put(('end', None))
 
 
-def check_mutants(mutants_queue, results_queue, cycle_process_after):
+def check_mutants(mutants_queue, results_queue, cycle_process_after, max_workers):
     def feedback(line):
         results_queue.put(('progress', line, None, None))
 
@@ -741,19 +747,24 @@ def check_mutants(mutants_queue, results_queue, cycle_process_after):
 
     try:
         count = 0
-        while True:
-            command, context = mutants_queue.get()
-            if command == 'end':
-                break
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = []
+            while True:
+                command, context = mutants_queue.get()
+                if command == 'end':
+                    break
 
-            status = run_mutation(context, feedback)
+                future = executor.submit(run_mutation, context, feedback)
+                futures.append((future, context))
+                count += 1
+                if count == cycle_process_after:
+                    results_queue.put(('cycle', None, None, None))
+                    did_cycle = True
+                    break
 
-            results_queue.put(('status', status, context.filename, context.mutation_id))
-            count += 1
-            if count == cycle_process_after:
-                results_queue.put(('cycle', None, None, None))
-                did_cycle = True
-                break
+            for future, context in futures:
+                status = future.result()
+                results_queue.put(('status', status, context.filename, context.mutation_id))
     finally:
         if not did_cycle:
             results_queue.put(('end', None, None, None))
@@ -813,7 +824,7 @@ def run_mutation(context: Context, callback) -> str:
         return SKIPPED
 
     finally:
-        move(context.filename + '.bak', context.filename)
+        move(context.backup_filename, context.filename)
         config.test_command = config._default_test_command  # reset test command to its default in the case it was altered in a hook
 
         if config.post_mutation:
@@ -1128,14 +1139,15 @@ def hammett_tests_pass(config: Config, callback) -> bool:
 CYCLE_PROCESS_AFTER = 100
 
 
+
 def run_mutation_tests(
     config: Config,
     progress: Progress,
     mutations_by_file: Dict[str, List[RelativeMutationID]],
+    max_workers: int
 ):
     from mutmut.cache import update_mutant_status
 
-    # Need to explicitly use the spawn method for python < 3.8 on macOS
     mp_ctx = multiprocessing.get_context('spawn')
 
     mutants_queue = mp_ctx.Queue(maxsize=100)
@@ -1144,12 +1156,13 @@ def run_mutation_tests(
         target=queue_mutants,
         name='queue_mutants',
         daemon=True,
-        kwargs=dict(
-            progress=progress,
-            config=config,
-            mutants_queue=mutants_queue,
-            mutations_by_file=mutations_by_file,
-        )
+        kwargs={
+            'progress': progress,
+            'config': config,
+            'mutants_queue': mutants_queue,
+            'mutations_by_file': mutations_by_file,
+            'max_workers': max_workers,
+        }
     )
     queue_mutants_thread.start()
 
@@ -1157,15 +1170,16 @@ def run_mutation_tests(
     add_to_active_queues(results_queue)
 
     def create_worker():
-        t = mp_ctx.Process(
+        t = Thread(
             target=check_mutants,
             name='check_mutants',
             daemon=True,
-            kwargs=dict(
-                mutants_queue=mutants_queue,
-                results_queue=results_queue,
-                cycle_process_after=CYCLE_PROCESS_AFTER,
-            )
+            kwargs={
+                'mutants_queue': mutants_queue,
+                'results_queue': results_queue,
+                'cycle_process_after': CYCLE_PROCESS_AFTER,
+                'max_workers': max_workers,
+            }
         )
         t.start()
         return t
@@ -1189,11 +1203,9 @@ def run_mutation_tests(
 
         else:
             assert command == 'status'
-
             progress.register(status)
 
             update_mutant_status(file_to_mutate=filename, mutation_id=mutation_id, status=status, tests_hash=config.hash_of_tests)
-
 
 def read_coverage_data() -> Dict[str, Dict[int, List[str]]]:
     """
