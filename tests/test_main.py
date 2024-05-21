@@ -315,6 +315,20 @@ To show a mutant:
     mutmut show <id>
 """.strip()
 
+def test_full_run_no_surviving_mutants_multiworkers(filesystem):
+    result = CliRunner().invoke(climain, ['run', '--paths-to-mutate=foo.py', "--test-time-base=15.0", "--max-workers=2"], catch_exceptions=False)
+    print(repr(result.output))
+    assert result.exit_code == 0
+    result = CliRunner().invoke(climain, ['results'], catch_exceptions=False)
+    print(repr(result.output))
+    assert result.exit_code == 0
+    assert result.output.strip() == u"""
+    To apply a mutant on disk:
+        mutmut apply <id>
+
+    To show a mutant:
+        mutmut show <id>
+    """.strip()
 
 def test_full_run_no_surviving_mutants_junit(filesystem):
     result = CliRunner().invoke(climain, ['run', '--paths-to-mutate=foo.py', "--test-time-base=15.0"], catch_exceptions=False)
@@ -401,6 +415,34 @@ Survived 🙁 (1)
 
 1
 """.strip()
+
+
+def test_full_run_one_surviving_mutant_multiworkers(filesystem):
+    with open(os.path.join(str(filesystem), "tests", "test_foo.py"), 'w') as f:
+        f.write(test_file_contents.replace('assert foo(2, 2) is False', ''))
+
+    result = CliRunner().invoke(climain, ['run', '--paths-to-mutate=foo.py', "--test-time-base=15.0", "--max-workers=2"],
+                                catch_exceptions=False)
+    print(repr(result.output))
+    assert result.exit_code == 2
+
+    result = CliRunner().invoke(climain, ['results'], catch_exceptions=False)
+    print(repr(result.output))
+    assert result.exit_code == 0
+    assert result.output.strip() == u"""
+    To apply a mutant on disk:
+        mutmut apply <id>
+
+    To show a mutant:
+        mutmut show <id>
+
+
+    Survived 🙁 (1)
+
+    ---- foo.py (1) ----
+
+    1
+    """.strip()
 
 
 def test_full_run_one_surviving_mutant_junit(filesystem):
@@ -704,7 +746,7 @@ def test_html_output(surviving_mutants_filesystem):
             '<table><thead><tr><th>File</th><th>Total</th><th>Skipped</th><th>Killed</th><th>% killed</th><th>Survived</th></thead>'
             '<tr><td><a href="foo.py.html">foo.py</a></td><td>2</td><td>0</td><td>0</td><td>0.00</td><td>2</td>'
             '</table></body></html>')
-        
+
 def test_html_custom_output(surviving_mutants_filesystem):
     result = CliRunner().invoke(climain, ['run', '--paths-to-mutate=foo.py', "--test-time-base=15.0"], catch_exceptions=False)
     print(repr(result.output))
