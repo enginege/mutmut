@@ -1,6 +1,6 @@
 from .mutation_strategy import MutationStrategy
 from parso.python.tree import Name
-from mutmut.context import Context
+from mutmut import Context
 
 class ArgumentMutation(MutationStrategy):
     def mutate(self, children, context: Context, **_):

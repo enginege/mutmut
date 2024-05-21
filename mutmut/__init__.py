@@ -30,12 +30,15 @@ from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple
 
 from parso import parse
 
-from .relative_mutation_id import RelativeMutationID, ALL
-from .ast_pattern import ASTPattern, import_from_star_pattern, array_subscript_pattern, function_call_pattern
-from .context import Context
-from .config import Config
-from .progress import Progress, UNTESTED, SKIPPED, BAD_TIMEOUT, OK_SUSPICIOUS, BAD_SURVIVED, OK_KILLED, MUTANT_STATUSES, print_status
-from .skip_exception import SkipException
+
+from .utils import (
+    RelativeMutationID, ALL,
+    ASTPattern, import_from_star_pattern, array_subscript_pattern, function_call_pattern,
+    Context,
+    Config,
+    Progress, UNTESTED, SKIPPED, BAD_TIMEOUT, OK_SUSPICIOUS, BAD_SURVIVED, OK_KILLED, MUTANT_STATUSES, print_status,
+    SkipException
+)
 
 from .mutation_operations import (
     NumberMutation,

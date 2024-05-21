@@ -1,5 +1,5 @@
 from .mutation_strategy import MutationStrategy
-from mutmut.ast_pattern import import_from_star_pattern
+from mutmut import import_from_star_pattern
 
 class OperatorMutation(MutationStrategy):
     def mutate(self, value, node, **_):

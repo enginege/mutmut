@@ -1,5 +1,5 @@
 from .mutation_strategy import MutationStrategy
-from mutmut.ast_pattern import array_subscript_pattern, function_call_pattern
+from mutmut import array_subscript_pattern, function_call_pattern
 
 class NameMutation(MutationStrategy):
     def mutate(self, node, value, **_):
