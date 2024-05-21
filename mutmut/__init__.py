@@ -37,18 +37,19 @@ from .config import Config
 from .progress import Progress, UNTESTED, SKIPPED, BAD_TIMEOUT, OK_SUSPICIOUS, BAD_SURVIVED, OK_KILLED, MUTANT_STATUSES, print_status
 from .skip_exception import SkipException
 
-from .mutation_operations.mutation_strategy import MutationStrategy
-from .mutation_operations.number_mutation import NumberMutation
-from .mutation_operations.string_mutation import StringMutation
-from .mutation_operations.fstring_mutation import FStringMutation
-from .mutation_operations.lambda_mutation import LambdaMutation
-from .mutation_operations.argument_mutation import ArgumentMutation
-from .mutation_operations.keyword_mutation import KeywordMutation
-from .mutation_operations.operator_mutation import OperatorMutation
-from .mutation_operations.and_or_test_mutation import AndOrTestMutation
-from .mutation_operations.expression_mutation import ExpressionMutation
-from .mutation_operations.decorator_mutation import DecoratorMutation
-from .mutation_operations.name_mutation import NameMutation
+from .mutation_operations import (
+    NumberMutation,
+    StringMutation,
+    FStringMutation,
+    LambdaMutation,
+    ArgumentMutation,
+    KeywordMutation,
+    OperatorMutation,
+    AndOrTestMutation,
+    ExpressionMutation,
+    DecoratorMutation,
+    NameMutation,
+)
 
 __version__ = '2.4.5'
 
