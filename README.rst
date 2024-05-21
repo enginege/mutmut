@@ -4,17 +4,22 @@ mutmut - software reenginering
 This version of mutmut mainly focuses on Company X's demands. Along with other refactorings, this version can run parallel mutant operations using ThreadPoolExecutor. By generating unique backup filenames using uuid, each thread can safely create its own backup file. This ensures that the backup process is thread-safe and reliable.
 
 How to use the parallel mutant execution feature
-----------
+---------------
+
 The --max-workers option allows users to specify the maximum number of workers for the ThreadPoolExecutor. By default, you can run mutmut with:
+
 .. code-block:: console
 
     mutmut run
+
 This will run mutmut with two workers, which is the optimal number of workers for running mutant operations. However, you can adjust the number of workers by using:
+
 .. code-block:: console
 
     mutmut run --max-workers=2
-.. note::
-Increasing the number of workers too much may cause improper execution. We recommend using two workers.
+
+
+**Note**: Increasing the number of workers too much may cause improper execution. We recommend using two workers.
 
 
 
