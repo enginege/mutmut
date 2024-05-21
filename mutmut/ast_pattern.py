@@ -1,6 +1,5 @@
 import re
 from parso import parse
-from parso.python.tree import Name
 from .invalid_ast_pattern_exception import InvalidASTPatternException
 
 class ASTPattern:
@@ -96,3 +95,21 @@ class ASTPattern:
                 return self.matches(node=node.parent, pattern=pattern.parent, skip_child=node)
 
         return True
+
+
+import_from_star_pattern = ASTPattern("""
+from _name import *
+#                 ^
+""")
+
+
+array_subscript_pattern = ASTPattern("""
+_name[_any]
+#       ^
+""")
+
+
+function_call_pattern = ASTPattern("""
+_name(_any)
+#       ^
+""")

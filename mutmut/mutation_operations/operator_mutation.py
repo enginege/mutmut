@@ -1,10 +1,5 @@
 from .mutation_strategy import MutationStrategy
-from mutmut.ast_pattern import ASTPattern
-
-import_from_star_pattern = ASTPattern("""
-from _name import *
-#                 ^
-""")
+from mutmut.ast_pattern import import_from_star_pattern
 
 class OperatorMutation(MutationStrategy):
     def mutate(self, value, node, **_):
