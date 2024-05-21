@@ -31,7 +31,7 @@ from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple
 from parso import parse
 
 from .relative_mutation_id import RelativeMutationID, ALL
-from .ast_pattern import ASTPattern
+from .ast_pattern import ASTPattern, import_from_star_pattern, array_subscript_pattern, function_call_pattern
 from .context import Context
 from .config import Config
 from .progress import Progress, UNTESTED, SKIPPED, BAD_TIMEOUT, OK_SUSPICIOUS, BAD_SURVIVED, OK_KILLED, MUTANT_STATUSES, print_status
@@ -84,24 +84,6 @@ def partition_node_list(nodes, value):
             return nodes[:i], n, nodes[i + 1:]
 
     assert False, "didn't find node to split on"
-
-
-import_from_star_pattern = ASTPattern("""
-from _name import *
-#                 ^
-""")
-
-
-array_subscript_pattern = ASTPattern("""
-_name[_any]
-#       ^
-""")
-
-
-function_call_pattern = ASTPattern("""
-_name(_any)
-#       ^
-""")
 
 
 mutations_by_type = {
