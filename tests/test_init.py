@@ -8,14 +8,14 @@ from shutil import move
 
 from mutmut import (
     partition_node_list,
-    name_mutation,
+    NameMutation,
     mutate_file,
     run_mutation_tests,
     check_mutants,
     close_active_queues,
     read_patch_data,
     OK_KILLED,
-    Context, 
+    Context,
     mutate)
 
 
@@ -52,7 +52,8 @@ def test_partition_node_list_no_nodes():
 
 
 def test_name_mutation_simple_mutants():
-    assert name_mutation(None, 'True') == 'False'
+    name_mutation = NameMutation();
+    assert name_mutation.mutate(None, 'True') == 'False'
 
 
 def test_context_exclude_line():
@@ -99,7 +100,7 @@ def test_run_mutation_tests_thread_synchronization(monkeypatch):
 
     def progress_mock_register(*_):
         progress_mock.registered_mutants += 1
-        
+
     progress_mock.register = progress_mock_register
 
     # act
