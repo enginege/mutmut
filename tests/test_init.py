@@ -4,10 +4,12 @@ from pathlib import Path
 from time import sleep
 from pytest import raises, fixture
 from unittest.mock import MagicMock, patch
+from shutil import move
 
 from mutmut import (
     partition_node_list,
     name_mutation,
+    mutate_file,
     run_mutation_tests,
     check_mutants,
     close_active_queues,
@@ -15,6 +17,33 @@ from mutmut import (
     OK_KILLED,
     Context, 
     mutate)
+
+
+def test_mutate_file_backup():
+    # Create test file
+    test_file = 'test_file.py'
+    with open(test_file, 'w') as f:
+        f.write('print("test")')
+
+    try:
+        # Create context for the test file
+        context = Context(filename=test_file, source='print("test")')
+
+        # Mutate file with backup
+        original, mutated = mutate_file(backup=True, context=context)
+
+        # Check that backup file exists
+        assert os.path.exists(context.backup_filename)
+        # Check that mutation occurred
+        assert original != mutated
+
+        # Restore original file
+        move(context.backup_filename, context.filename)
+    finally:
+        # Clean up test file
+        os.remove(test_file)
+        if os.path.exists(context.backup_filename):
+            os.remove(context.backup_filename)
 
 
 def test_partition_node_list_no_nodes():
@@ -50,6 +79,7 @@ def test_run_mutation_tests_thread_synchronization(monkeypatch):
     # arrange
     total_mutants = 3
     cycle_process_after = 1
+    max_workers = 2
 
     def queue_mutants_stub(**kwargs):
         for _ in range(total_mutants):
@@ -73,7 +103,7 @@ def test_run_mutation_tests_thread_synchronization(monkeypatch):
     progress_mock.register = progress_mock_register
 
     # act
-    run_mutation_tests(config_stub, progress_mock, None)
+    run_mutation_tests(config_stub, progress_mock, None, max_workers)
 
     # assert
     assert progress_mock.registered_mutants == total_mutants
