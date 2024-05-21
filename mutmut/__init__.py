@@ -3,18 +3,14 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 import uuid
 import fnmatch
-import itertools
 import multiprocessing
 import os
-import re
 import shlex
 import subprocess
 import sys
 import toml
-from abc import ABC, abstractmethod
 from configparser import ConfigParser
 from copy import copy as copy_obj
-from dataclasses import dataclass, field
 from functools import wraps
 from io import (
     open,
@@ -33,7 +29,6 @@ from time import time
 from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple
 
 from parso import parse
-from parso.python.tree import Name, Number, Keyword, FStringStart, FStringEnd
 
 from .relative_mutation_id import RelativeMutationID, ALL
 from .ast_pattern import ASTPattern
@@ -41,6 +36,19 @@ from .context import Context
 from .config import Config
 from .progress import Progress, UNTESTED, SKIPPED, BAD_TIMEOUT, OK_SUSPICIOUS, BAD_SURVIVED, OK_KILLED, MUTANT_STATUSES, print_status
 from .skip_exception import SkipException
+
+from .mutation_operations.mutation_strategy import MutationStrategy
+from .mutation_operations.number_mutation import NumberMutation
+from .mutation_operations.string_mutation import StringMutation
+from .mutation_operations.fstring_mutation import FStringMutation
+from .mutation_operations.lambda_mutation import LambdaMutation
+from .mutation_operations.argument_mutation import ArgumentMutation
+from .mutation_operations.keyword_mutation import KeywordMutation
+from .mutation_operations.operator_mutation import OperatorMutation
+from .mutation_operations.and_or_test_mutation import AndOrTestMutation
+from .mutation_operations.expression_mutation import ExpressionMutation
+from .mutation_operations.decorator_mutation import DecoratorMutation
+from .mutation_operations.name_mutation import NameMutation
 
 __version__ = '2.4.5'
 
@@ -69,89 +77,6 @@ dunder_whitelist = [
 ]
 
 
-
-
-
-class MutationStrategy(ABC):
-    @abstractmethod
-    def mutate(self, *args, **kwargs):
-        pass
-
-class NumberMutation(MutationStrategy):
-    def mutate(self, value, **_):
-        suffix = ''
-        if value.upper().endswith('L'):  # pragma: no cover (python 2 specific)
-            suffix = value[-1]
-            value = value[:-1]
-
-        if value.upper().endswith('J'):
-            suffix = value[-1]
-            value = value[:-1]
-
-        if value.startswith('0o'):
-            base = 8
-            value = value[2:]
-        elif value.startswith('0x'):
-            base = 16
-            value = value[2:]
-        elif value.startswith('0b'):
-            base = 2
-            value = value[2:]
-        elif value.startswith('0') and len(value) > 1 and value[1] != '.':  # pragma: no cover (python 2 specific)
-            base = 8
-            value = value[1:]
-        else:
-            base = 10
-
-        try:
-            parsed = int(value, base=base)
-            result = repr(parsed + 1)
-        except ValueError:
-            # Since it wasn't an int, it must be a float
-            parsed = float(value)
-            # This avoids all very small numbers becoming 1.0, and very
-            # large numbers not changing at all
-            if (1e-5 < abs(parsed) < 1e5) or (parsed == 0.0):
-                result = repr(parsed + 1)
-            else:
-                result = repr(parsed * 2)
-
-        if not result.endswith(suffix):
-            result += suffix
-        return result
-
-
-
-class StringMutation(MutationStrategy):
-    def mutate(self, value, **_):
-        prefix = value[:min(x for x in [value.find('"'), value.find("'")] if x != -1)]
-        value = value[len(prefix):]
-
-        if value.startswith('"""') or value.startswith("'''"):
-            # We assume here that triple-quoted stuff are docs or other things
-            # that mutation is meaningless for
-            return prefix + value
-        return prefix + value[0] + 'XX' + value[1:-1] + 'XX' + value[-1]
-
-
-class FStringMutation(MutationStrategy):
-    def mutate(self, children, **_):
-        fstring_start: FStringStart = children[0]
-        fstring_end: FStringEnd = children[-1]
-
-        children = children[:]  # we need to copy the list here, to not get in place mutation on the next line!
-
-        children[0] = FStringStart(fstring_start.value + 'XX',
-                                   start_pos=fstring_start.start_pos,
-                                   prefix=fstring_start.prefix)
-
-        children[-1] = FStringEnd('XX' + fstring_end.value,
-                                  start_pos=fstring_end.start_pos,
-                                  prefix=fstring_end.prefix)
-
-        return children
-
-
 def partition_node_list(nodes, value):
     for i, n in enumerate(nodes):
         if hasattr(n, 'value') and n.value == value:
@@ -160,153 +85,10 @@ def partition_node_list(nodes, value):
     assert False, "didn't find node to split on"
 
 
-class LambdaMutation(MutationStrategy):
-    def mutate(self, children, **_):
-        pre, op, post = partition_node_list(children, value=':')
-
-        if len(post) == 1 and getattr(post[0], 'value', None) == 'None':
-            return pre + [op] + [Number(value=' 0', start_pos=post[0].start_pos)]
-        else:
-            return pre + [op] + [Keyword(value=' None', start_pos=post[0].start_pos)]
-
-
-NEWLINE = {'formatting': [], 'indent': '', 'type': 'endl', 'value': ''}
-
-
-class ArgumentMutation(MutationStrategy):
-    def mutate(self, children, context: Context, **_):
-        if len(context.stack) >= 3 and context.stack[-3].type in ('power', 'atom_expr'):
-            stack_pos_of_power_node = -3
-        elif len(context.stack) >= 4 and context.stack[-4].type in ('power', 'atom_expr'):
-            stack_pos_of_power_node = -4
-        else:
-            return
-
-        power_node = context.stack[stack_pos_of_power_node]
-
-        if power_node.children[0].type == 'name' and power_node.children[0].value in context.dict_synonyms:
-            c = children[0]
-            if c.type == 'name':
-                children = children[:]
-                children[0] = Name(c.value + 'XX', start_pos=c.start_pos, prefix=c.prefix)
-                return children
-
-
-class KeywordMutation(MutationStrategy):
-    def mutate(self, value, context, **_):
-        if len(context.stack) > 2 and context.stack[-2].type in ('comp_op', 'sync_comp_for') and value in ('in', 'is'):
-            return
-
-        if len(context.stack) > 1 and context.stack[-2].type == 'for_stmt':
-            return
-
-        return {
-            'not': '',
-            'is': 'is not',  # this will cause "is not not" sometimes, so there's a hack to fix that later
-            'in': 'not in',
-            'break': 'continue',
-            'continue': 'break',
-            'True': 'False',
-            'False': 'True',
-        }.get(value)
-
-
 import_from_star_pattern = ASTPattern("""
 from _name import *
 #                 ^
 """)
-
-
-class OperatorMutation(MutationStrategy):
-    def mutate(self, value, node, **_):
-        if import_from_star_pattern.matches(node=node):
-            return
-
-        if value in ('*', '**') and node.parent.type == 'param':
-            return
-
-        if value == '*' and node.parent.type == 'parameters':
-            return
-
-        if value in ('*', '**') and node.parent.type in ('argument', 'arglist'):
-            return
-
-        return {
-            '+': '-',
-            '-': '+',
-            '*': '/',
-            '/': '*',
-            '//': '/',
-            '%': '/',
-            '<<': '>>',
-            '>>': '<<',
-            '&': '|',
-            '|': '&',
-            '^': '&',
-            '**': '*',
-            '~': '',
-
-            '+=': ['-=', '='],
-            '-=': ['+=', '='],
-            '*=': ['/=', '='],
-            '/=': ['*=', '='],
-            '//=': ['/=', '='],
-            '%=': ['/=', '='],
-            '<<=': ['>>=', '='],
-            '>>=': ['<<=', '='],
-            '&=': ['|=', '='],
-            '|=': ['&=', '='],
-            '^=': ['&=', '='],
-            '**=': ['*=', '='],
-            '~=': '=',
-
-            '<': '<=',
-            '<=': '<',
-            '>': '>=',
-            '>=': '>',
-            '==': '!=',
-            '!=': '==',
-            '<>': '==',
-        }.get(value)
-
-
-class AndOrTestMutation(MutationStrategy):
-    def mutate(self, children, node, **_):
-        children = children[:]
-        children[1] = Keyword(
-            value={'and': ' or', 'or': ' and'}[children[1].value],
-            start_pos=node.start_pos,
-        )
-        return children
-
-
-class ExpressionMutation(MutationStrategy):
-    def mutate(self, children, **_):
-        def handle_assignment(children):
-            mutation_index = -1  # we mutate the last value to handle multiple assignement
-            if getattr(children[mutation_index], 'value', '---') != 'None':
-                x = ' None'
-            else:
-                x = ' ""'
-            children = children[:]
-            children[mutation_index] = Name(value=x, start_pos=children[mutation_index].start_pos)
-
-            return children
-
-        if children[0].type == 'operator' and children[0].value == ':':
-            if len(children) > 2 and children[2].value == '=':
-                children = children[:]  # we need to copy the list here, to not get in place mutation on the next line!
-                children[1:] = handle_assignment(children[1:])
-        elif children[1].type == 'operator' and children[1].value == '=':
-            children = handle_assignment(children)
-
-        return children
-
-
-class DecoratorMutation(MutationStrategy):
-    def mutate(self, children, **_):
-        assert children[-1].type == 'newline'
-        return children[-1:]
 
 
 array_subscript_pattern = ASTPattern("""
@@ -319,43 +101,6 @@ function_call_pattern = ASTPattern("""
 _name(_any)
 #       ^
 """)
-
-
-class NameMutation(MutationStrategy):
-    def mutate(self, node, value, **_):
-        simple_mutants = {
-            'True': 'False',
-            'False': 'True',
-            'deepcopy': 'copy',
-            'None': '""',
-            'max': 'min',
-            'min': 'max',
-            'len': 'sum',
-            'sum': 'len',
-            'all': 'any',
-            'any': 'all',
-            'sorted': 'reversed',
-            'reversed': 'sorted',
-            'abs': 'len',
-            'map': 'filter',
-            'filter': 'map',
-            'range': 'list',
-            'list': 'tuple',
-            'tuple': 'list',
-            'dict': 'list',
-            'set': 'list',
-            'frozenset': 'set',
-            'str': 'repr',
-            'repr': 'str',
-        }
-        if value in simple_mutants:
-            return simple_mutants[value]
-
-        if array_subscript_pattern.matches(node=node):
-            return 'None'
-
-        if function_call_pattern.matches(node=node):
-            return 'None'
 
 
 mutations_by_type = {
