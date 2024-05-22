@@ -55,7 +55,7 @@ from .mutation_operations import (
     NameMutation,
 )
 
-from .mutation_iterator import MutationIterator
+from .mutation_iterator import MutationIterator, MutationCollection
 
 __version__ = '2.4.5'
 
@@ -118,9 +118,12 @@ def mutate(context: Context) -> Tuple[str, int]:
         print('Failed to parse {}. Internal error from parso follows.'.format(context.filename))
         print('----------------------------------')
         raise
-    mutation_iterator = MutationIterator(result.children)
-    for node in mutation_iterator:
+    mutation_collection = MutationCollection(result.children)
+    mutation_iterator = mutation_collection.get_iterator()
+    while mutation_iterator.has_next():
+        node = mutation_iterator.current()
         mutate_node(node, context=context)
+        mutation_iterator.__next__()
     mutated_source = result.get_code().replace(' not not ', ' ')
     if context.remove_newline_at_end:
         assert mutated_source[-1] == '\n'
