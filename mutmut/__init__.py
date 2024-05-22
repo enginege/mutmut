@@ -36,7 +36,8 @@ from .utils import (
     Context,
     Config,
     Progress, UNTESTED, SKIPPED, BAD_TIMEOUT, OK_SUSPICIOUS, BAD_SURVIVED, OK_KILLED, MUTANT_STATUSES, print_status,
-    SkipException
+    SkipException,
+    MutationCollection
 )
 
 from .mutation_operations import (
@@ -53,8 +54,6 @@ from .mutation_operations import (
     DecoratorMutation,
     NameMutation,
 )
-
-from .mutation_iterator import MutationIterator, MutationCollection
 
 __version__ = '2.4.5'
 

@@ -24,7 +24,7 @@ from mutmut import (
 
 from mutmut.cache import print_result_cache, print_result_ids_cache, hash_of_tests, filename_and_mutation_id_from_pk, \
     update_line_numbers, print_result_cache_junitxml, get_unified_diff, create_html_report
-from mutmut.utils.mutation_test_runner import MutationTestRunner
+from mutmut.mutation_test_runner import MutationTestRunner
 
 
 def do_apply(mutation_pk: str, dict_synonyms: List[str], backup: bool):
