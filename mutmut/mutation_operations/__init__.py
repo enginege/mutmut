@@ -1,3 +1,4 @@
+from .mutation_strategy import MutationStrategy
 from .number_mutation import NumberMutation
 from .string_mutation import StringMutation
 from .fstring_mutation import FStringMutation

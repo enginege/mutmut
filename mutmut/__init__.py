@@ -41,6 +41,7 @@ from .utils import (
 )
 
 from .mutation_operations import (
+    MutationStrategy,
     NumberMutation,
     StringMutation,
     FStringMutation,
@@ -53,6 +54,8 @@ from .mutation_operations import (
     DecoratorMutation,
     NameMutation,
 )
+
+from .mutation_iterator import MutationIterator
 
 __version__ = '2.4.5'
 
@@ -109,16 +112,15 @@ mutations_by_type = {
 # TODO: detect regexes and mutate them in nasty ways? Maybe mutate all strings as if they are regexes
 
 def mutate(context: Context) -> Tuple[str, int]:
-    """
-    :return: tuple of mutated source code and number of mutations performed
-    """
     try:
         result = parse(context.source, error_recovery=False)
     except Exception:
         print('Failed to parse {}. Internal error from parso follows.'.format(context.filename))
         print('----------------------------------')
         raise
-    mutate_list_of_nodes(result, context=context)
+    mutation_iterator = MutationIterator(result.children)
+    for node in mutation_iterator:
+        mutate_node(node, context=context)
     mutated_source = result.get_code().replace(' not not ', ' ')
     if context.remove_newline_at_end:
         assert mutated_source[-1] == '\n'
