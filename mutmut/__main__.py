@@ -21,11 +21,9 @@ from mutmut import (
     add_mutations_by_file,
     python_source_files,
 )
-from mutmut.cache import (
-    create_html_report,
-)
+
 from mutmut.cache import print_result_cache, print_result_ids_cache, hash_of_tests, filename_and_mutation_id_from_pk, \
-    update_line_numbers, print_result_cache_junitxml, get_unified_diff
+    update_line_numbers, print_result_cache_junitxml, get_unified_diff, create_html_report
 from mutmut.utils.mutation_test_runner import MutationTestRunner
 
 
