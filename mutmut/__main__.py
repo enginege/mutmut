@@ -106,38 +106,6 @@ class MutationTestRunner:
             )
         return [p for p in test_paths for p in glob(p, recursive=True)]
 
-    def get_covered_lines_by_filename(self, use_coverage, use_patch_file):
-        if not use_coverage and not use_patch_file:
-            return None
-
-        covered_lines_by_filename = {}
-        if use_coverage:
-            coverage_data = read_coverage_data()
-            check_coverage_data_filepaths(coverage_data)
-        else:
-            assert use_patch_file
-            covered_lines_by_filename = read_patch_data(use_patch_file)
-
-        return covered_lines_by_filename
-
-    def get_mutation_types_to_apply(self, disable_mutation_types, enable_mutation_types):
-        if enable_mutation_types:
-            mutation_types_to_apply = set(mtype.strip() for mtype in enable_mutation_types.split(","))
-            invalid_types = [mtype for mtype in mutation_types_to_apply if mtype not in mutations_by_type]
-        elif disable_mutation_types:
-            mutation_types_to_apply = set(mutations_by_type.keys()) - set(
-                mtype.strip() for mtype in disable_mutation_types.split(","))
-            invalid_types = [mtype for mtype in disable_mutation_types.split(",") if mtype not in mutations_by_type]
-        else:
-            mutation_types_to_apply = set(mutations_by_type.keys())
-            invalid_types = None
-
-        if invalid_types:
-            raise click.BadArgumentUsage(
-                f"The following are not valid mutation types: {', '.join(sorted(invalid_types))}. Valid mutation types are: {', '.join(mutations_by_type.keys())}")
-
-        return mutation_types_to_apply
-
     def parse_run_argument(self, argument, dict_synonyms, mutations_by_file, paths_to_exclude, paths_to_mutate,
                            tests_dirs):
         if argument is None:
@@ -203,6 +171,40 @@ class MutationTestRunner:
         if simple_output:
             output_legend = {key: key.upper() for (key, value) in output_legend.items()}
         return output_legend
+
+    @staticmethod
+    def get_mutation_types_to_apply(disable_mutation_types, enable_mutation_types):
+        if enable_mutation_types:
+            mutation_types_to_apply = set(mtype.strip() for mtype in enable_mutation_types.split(","))
+            invalid_types = [mtype for mtype in mutation_types_to_apply if mtype not in mutations_by_type]
+        elif disable_mutation_types:
+            mutation_types_to_apply = set(mutations_by_type.keys()) - set(
+                mtype.strip() for mtype in disable_mutation_types.split(","))
+            invalid_types = [mtype for mtype in disable_mutation_types.split(",") if mtype not in mutations_by_type]
+        else:
+            mutation_types_to_apply = set(mutations_by_type.keys())
+            invalid_types = None
+
+        if invalid_types:
+            raise click.BadArgumentUsage(
+                f"The following are not valid mutation types: {', '.join(sorted(invalid_types))}. Valid mutation types are: {', '.join(mutations_by_type.keys())}")
+
+        return mutation_types_to_apply
+
+    @staticmethod
+    def get_covered_lines_by_filename(use_coverage, use_patch_file):
+        if not use_coverage and not use_patch_file:
+            return None
+
+        covered_lines_by_filename = {}
+        if use_coverage:
+            coverage_data = read_coverage_data()
+            check_coverage_data_filepaths(coverage_data)
+        else:
+            assert use_patch_file
+            covered_lines_by_filename = read_patch_data(use_patch_file)
+
+        return covered_lines_by_filename
 
 
 def do_apply(mutation_pk: str, dict_synonyms: List[str], backup: bool):
