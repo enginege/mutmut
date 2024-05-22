@@ -12,6 +12,7 @@ class Context:
         config: Optional[Config] = None,
         index=0,
     ):
+        self.backup_filename = filename
         self.index = index
         self.remove_newline_at_end = False
         self._source = None

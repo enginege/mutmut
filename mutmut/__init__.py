@@ -26,10 +26,9 @@ from threading import (
     Thread,
 )
 from time import time
-from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple, Union
+from typing import Callable, Dict, Iterator, List, Optional, Tuple, Union
 
 from parso import parse
-
 
 from .utils import (
     RelativeMutationID, ALL,
@@ -59,14 +58,12 @@ from .mutation_iterator import MutationIterator, MutationCollection
 
 __version__ = '2.4.5'
 
-
 if os.getcwd() not in sys.path:
     sys.path.insert(0, os.getcwd())
 try:
     import mutmut_config
 except ImportError:
     mutmut_config = None
-
 
 # We have a global whitelist for constants of the pattern __all__, __version__, etc
 
@@ -251,13 +248,14 @@ def mutate_file(backup: bool, context: Context) -> Tuple[str, str]:
         f.write(mutated)
     return original, mutated
 
+
 def queue_mutants(
-    *,
-    progress: Progress,
-    config: Config,
-    mutants_queue,
-    mutations_by_file: Dict[str, List[RelativeMutationID]],
-    max_workers: int = 2
+        *,
+        progress: Progress,
+        config: Config,
+        mutants_queue,
+        mutations_by_file: Dict[str, List[RelativeMutationID]],
+        max_workers: int = 2
 ):
     from mutmut.cache import get_cached_mutation_statuses
 
@@ -354,16 +352,16 @@ def run_mutation(context: Context, callback) -> str:
         start = time()
         try:
             survived = tests_pass(config=config, callback=callback)
-            if survived and config.test_command != config._default_test_command and config.rerun_all:
+            if survived and config.test_command != config.default_test_command and config.rerun_all:
                 # rerun the whole test suite to be sure the mutant can not be killed by other tests
-                config.test_command = config._default_test_command
+                config.test_command = config.default_test_command
                 survived = tests_pass(config=config, callback=callback)
         except TimeoutError:
             return BAD_TIMEOUT
 
         time_elapsed = time() - start
         if not survived and time_elapsed > config.test_time_base + (
-            config.baseline_time_elapsed * config.test_time_multiplier
+                config.baseline_time_elapsed * config.test_time_multiplier
         ):
             return OK_SUSPICIOUS
 
@@ -376,7 +374,7 @@ def run_mutation(context: Context, callback) -> str:
 
     finally:
         move(context.backup_filename, context.filename)
-        config.test_command = config._default_test_command  # reset test command to its default in the case it was altered in a hook
+        config.test_command = config.default_test_command  # reset test command to its default in the case it was altered in a hook
 
         if config.post_mutation:
             result = subprocess.check_output(config.post_mutation, shell=True).decode().strip()
@@ -428,11 +426,8 @@ def config_from_file(**defaults):
             f(*args, **kwargs)
 
         return wrapper
+
     return decorator
-
-
-
-
 
 
 def guess_paths_to_mutate() -> str:
@@ -472,7 +467,7 @@ def get_mutations_by_file_from_cache(mutation_pk):
 
 
 def popen_streaming_output(
-    cmd: str, callback: Callable[[Union[str, bytes]], None], timeout: Optional[float] = None
+        cmd: str, callback: Callable[[Union[str, bytes]], None], timeout: Optional[float] = None
 ) -> int:
     """Open a subprocess and stream its output without hard-blocking.
 
@@ -592,24 +587,26 @@ def hammett_tests_pass(config: Config, callback) -> bool:
     modules_to_force_unload = {x.partition(os.sep)[0].replace('.py', '') for x in config.paths_to_mutate}
 
     for module_name in sorted(set(sys.modules.keys()) - set(modules_before), reverse=True):
-        if any(module_name.startswith(x) for x in modules_to_force_unload) or module_name.startswith('tests') or module_name.startswith('django'):
+        if any(module_name.startswith(x) for x in modules_to_force_unload) or module_name.startswith(
+                'tests') or module_name.startswith('django'):
             del sys.modules[module_name]
 
     return returncode == 0
 
+
 CYCLE_PROCESS_AFTER = 100
 
 
-
 def run_mutation_tests(
-    config: Config,
-    progress: Progress,
-    mutations_by_file: Dict[str, List[RelativeMutationID]],
-    max_workers: int
+        config: Config,
+        progress: Progress,
+        mutations_by_file: Dict[str, List[RelativeMutationID]],
+        max_workers: int
 ):
     from mutmut.cache import update_mutant_status
 
-    mp_ctx = multiprocessing.get_context('spawn')
+    multiprocessing.set_start_method('spawn', force=True)
+    mp_ctx = multiprocessing.get_context()
 
     mutants_queue = mp_ctx.Queue(maxsize=100)
     add_to_active_queues(mutants_queue)
@@ -666,7 +663,9 @@ def run_mutation_tests(
             assert command == 'status'
             progress.register(status)
 
-            update_mutant_status(file_to_mutate=filename, mutation_id=mutation_id, status=status, tests_hash=config.hash_of_tests)
+            update_mutant_status(file_to_mutate=filename, mutation_id=mutation_id, status=status,
+                                 tests_hash=config.hash_of_tests)
+
 
 def read_coverage_data() -> Dict[str, Dict[int, List[str]]]:
     """
@@ -676,7 +675,8 @@ def read_coverage_data() -> Dict[str, Dict[int, List[str]]]:
         # noinspection PyPackageRequirements,PyUnresolvedReferences
         from coverage import Coverage
     except ImportError as e:
-        raise ImportError('The --use-coverage feature requires the coverage library. Run "pip install --force-reinstall mutmut[coverage]"') from e
+        raise ImportError(
+            'The --use-coverage feature requires the coverage library. Run "pip install --force-reinstall mutmut[coverage]"') from e
     cov = Coverage('.coverage')
     cov.load()
     data = cov.get_data()
@@ -688,7 +688,8 @@ def read_patch_data(patch_file_path: str):
         # noinspection PyPackageRequirements
         import whatthepatch
     except ImportError as e:
-        raise ImportError('The --use-patch feature requires the whatthepatch library. Run "pip install --force-reinstall mutmut[patch]"') from e
+        raise ImportError(
+            'The --use-patch feature requires the whatthepatch library. Run "pip install --force-reinstall mutmut[patch]"') from e
     with open(patch_file_path) as f:
         diffs = whatthepatch.parse_patch(f.read())
 
@@ -699,10 +700,10 @@ def read_patch_data(patch_file_path: str):
 
 
 def add_mutations_by_file(
-    mutations_by_file: Dict[str, List[RelativeMutationID]],
-    filename: str,
-    dict_synonyms: List[str],
-    config: Optional[Config],
+        mutations_by_file: Dict[str, List[RelativeMutationID]],
+        filename: str,
+        dict_synonyms: List[str],
+        config: Optional[Config],
 ):
     with open(filename) as f:
         source = f.read()
@@ -727,7 +728,7 @@ def add_mutations_by_file(
 
 
 def python_source_files(
-    path: str, tests_dirs: List[str], paths_to_exclude: Optional[List[str]] = None
+        path: str, tests_dirs: List[str], paths_to_exclude: Optional[List[str]] = None
 ) -> Iterator[str]:
     """Attempt to guess where the python source files to mutate are and yield
     their paths
@@ -755,7 +756,7 @@ def python_source_files(
 
 
 def compute_exit_code(
-    progress: Progress, exception: Optional[Exception] = None, ci: bool = False
+        progress: Progress, exception: Optional[Exception] = None, ci: bool = False
 ) -> int:
     """Compute an exit code for mutmut mutation testing
 

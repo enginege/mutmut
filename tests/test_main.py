@@ -13,7 +13,7 @@ from unittest.mock import (
     call,
     MagicMock,
 )
-
+import glob
 import pytest
 from click.testing import CliRunner
 
@@ -296,7 +296,8 @@ def test_simply_apply_with_backup(filesystem):
     assert result.exit_code == 0
     with open(os.path.join(str(filesystem), 'foo.py')) as f:
         assert f.read() != file_to_mutate_contents
-    with open(os.path.join(str(filesystem), 'foo.py.bak')) as f:
+    backup_files = glob.glob(os.path.join(str(filesystem), 'foo.py.*.bak'))
+    with open(backup_files[0]) as f:
         assert f.read() == file_to_mutate_contents
 
 

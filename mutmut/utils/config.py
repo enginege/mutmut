@@ -28,6 +28,10 @@ class Config:
     def __post_init__(self):
         self._default_test_command = self.test_command
 
+    @property
+    def default_test_command(self):
+        return self._default_test_command
+
 
 def should_exclude(context, config: Optional[Config]):
     if config is None or config.covered_lines_by_filename is None:
