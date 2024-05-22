@@ -26,7 +26,7 @@ from threading import (
     Thread,
 )
 from time import time
-from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple
+from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 from parso import parse
 
@@ -472,7 +472,7 @@ def get_mutations_by_file_from_cache(mutation_pk):
 
 
 def popen_streaming_output(
-    cmd: str, callback: Callable[[str], None], timeout: Optional[float] = None
+    cmd: str, callback: Callable[[Union[str, bytes]], None], timeout: Optional[float] = None
 ) -> int:
     """Open a subprocess and stream its output without hard-blocking.
 
@@ -514,7 +514,7 @@ def popen_streaming_output(
     timer.daemon = True
     timer.start()
 
-    while process.returncode is None:
+    while process.poll() is None:
         try:
             if os.name == 'nt':  # pragma: no cover
                 line = stdout.readline()
